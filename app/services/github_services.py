@@ -14,22 +14,6 @@ class GithubCodeEvaluator:
         # GitHub API token for authentication (e.g., "ghp_1234567890abcdef")
         self.github: Github = Github(os.getenv('GITHUB_TOKEN'))
 
-        # Store SonarCloud API token from environment variable
-        # SonarCloud API token for authentication (e.g., "sonar_1234567890abcdef")
-        self.sonarcloud_token: str = os.getenv('SONARCLOUD_TOKEN')
-
-        # Store Codacy API token from environment variable
-        # Codacy API token for authentication (e.g., "codacy_1234567890abcdef")
-        self.codacy_token: str = os.getenv('CODACY_TOKEN')
-
-        # Store SonarCloud API base URL from environment variable
-        # Base URL for SonarCloud API (e.g., "https://sonarcloud.io/api")
-        self.sonarcloud_url: str = os.getenv('SONARCLOUD_URL')
-
-        # Store Codacy API base URL from environment variable
-        # Base URL for Codacy API (e.g., "https://api.codacy.com/api/v3")
-        self.codacy_url: str = os.getenv('CODACY_URL')
-
         # Set OpenAI API key from environment variable
         # OpenAI API key for authentication (e.g., "sk-1234567890abcdef")
         openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -43,8 +27,11 @@ class GithubCodeEvaluator:
 
         Returns:
             Dict[str, Any]: A dictionary containing the evaluation results:
-                - code_quality_grade (float): The overall code quality grade (0-100).
-                - tech_stack_grade (float): The tech stack grade (0-100).
+                - structure_grade (float): The overall structure grade (0-1000).
+                - code_quality_grade (float): The code quality grade (0-100).
+                - code_quality_explanation (str): Explanation of the code quality grade.
+                - tech_stack_grade (float): The tech stack grade (0-1000).
+                - tech_stack (Dict[str, Any]): Tech stack evaluation results.
                 - summary (str): A detailed summary of the evaluation.
 
         Raises:
@@ -53,20 +40,22 @@ class GithubCodeEvaluator:
         owner, repo_name = self._parse_github_url(repo_url)
         repo = self.github.get_repo(f"{owner}/{repo_name}")
         
-        sonarcloud_report = self._analyze_code_quality_sonarcloud(owner, repo_name)
-        codacy_report = self._analyze_code_quality_codacy(owner, repo_name)
+        structure_analysis = self._analyze_repo_structure(repo)
+        important_files = self._get_important_files(repo)
+        code_content = self._fetch_important_content(repo, important_files)
+        
+        code_evaluation = self._evaluate_code_with_openai(structure_analysis, code_content)
         tech_stack = self._evaluate_tech_stack(repo)
         
-        code_quality_grade, tech_stack_grade, summary = self._calculate_grades_and_summary(
-            sonarcloud_report, codacy_report, tech_stack
-        )
-        
-        final_summary = self._aggregate_summary(code_quality_grade, tech_stack_grade, summary)
+        summary = self._generate_summary(code_evaluation, tech_stack)
         
         return {
-            "code_quality_grade": code_quality_grade,
-            "tech_stack_grade": tech_stack_grade,
-            "summary": final_summary
+            "structure_grade": code_evaluation['structure_grade'],
+            "code_quality_grade": code_evaluation['code_quality']['rating'],
+            "code_quality_explanation": code_evaluation['code_quality']['explanation'],
+            "tech_stack_grade": tech_stack['grade'],
+            "tech_stack": tech_stack['stack'],
+            "summary": summary
         }
 
     def _parse_github_url(self, url: str) -> Tuple[str, str]:
@@ -101,308 +90,150 @@ class GithubCodeEvaluator:
         
         return owner, repo
 
-    def _analyze_code_quality_sonarcloud(self, owner: str, repo_name: str) -> Dict[str, Any]:
-        """
-        Analyze code quality using SonarCloud API.
-
-        Args:
-            owner (str): The owner of the GitHub repository.
-            repo_name (str): The name of the GitHub repository.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing SonarCloud analysis results:
-                - measures (Dict): Various code quality metrics.
-                - issues (Dict): Summary of code issues.
-
-        Raises:
-            requests.RequestException: If there's an error in the API request.
-        """
-        project_key = f"{owner}_{repo_name}"
-        headers = {"Authorization": f"Bearer {self.sonarcloud_token}"}
-        
-        measures_url = f"{self.sonarcloud_url}/measures/component"
-        params = {
-            "component": project_key,
-            "metricKeys": "ncloc,complexity,violations,coverage,duplicated_lines_density,sqale_index,reliability_rating,security_rating,sqale_rating"
-        }
-        response = requests.get(measures_url, headers=headers, params=params)
-        measures = response.json()
-
-        issues_url = f"{self.sonarcloud_url}/issues/search"
-        params = {"componentKeys": project_key, "facets": "types,severities"}
-        response = requests.get(issues_url, headers=headers, params=params)
-        issues = response.json()
-
-        return {
-            "measures": measures,
-            "issues": issues
-        }
-
-    def _analyze_code_quality_codacy(self, owner: str, repo_name: str) -> Dict[str, Any]:
-        """
-        Analyze code quality using Codacy API.
-
-        Args:
-            owner (str): The owner of the GitHub repository.
-            repo_name (str): The name of the GitHub repository.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing Codacy analysis results:
-                - summary (Dict): Overall project summary.
-                - metrics (Dict): Detailed code metrics.
-
-        Raises:
-            requests.RequestException: If there's an error in the API request.
-        """
-        headers = {"api-token": self.codacy_token}
-        
-        summary_url = f"{self.codacy_url}/analysis/organizations/{owner}/projects/{repo_name}"
-        logging.info(f"Requesting Codacy summary from: {summary_url}")
-        response = requests.get(summary_url, headers=headers)
-        
-        if response.status_code != 200:
-            logging.error(f"Codacy API error: {response.status_code} - {response.text}")
-            return {"summary": {}, "metrics": {}}
-
-        try:
-            summary = response.json()
-        except json.JSONDecodeError:
-            logging.error(f"Failed to parse Codacy summary response: {response.text}")
-            summary = {}
-
-        metrics_url = f"{self.codacy_url}/metrics/organizations/{owner}/projects/{repo_name}"
-        logging.info(f"Requesting Codacy metrics from: {metrics_url}")
-        response = requests.get(metrics_url, headers=headers)
-        
-        if response.status_code != 200:
-            logging.error(f"Codacy API error: {response.status_code} - {response.text}")
-            return {"summary": summary, "metrics": {}}
-
-        try:
-            metrics = response.json()
-        except json.JSONDecodeError:
-            logging.error(f"Failed to parse Codacy metrics response: {response.text}")
-            metrics = {}
-
-        return {
-            "summary": summary,
-            "metrics": metrics
-        }
-
-    def _evaluate_tech_stack(self, repo: Any) -> Dict[str, Any]:
-        """
-        Evaluate the tech stack using OpenAI's GPT-4.
-
-        Args:
-            repo (Any): The GitHub repository object.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing:
-                - technologies (List[str]): Identified technologies and frameworks.
-                - modernness_score (float): Score for how modern the stack is (0-100).
-                - scalability_score (float): Score for potential scalability (0-100).
-                - summary (str): A brief summary of the evaluation.
-
-        Raises:
-            Exception: If there's an error in parsing the OpenAI response.
-        """
-        files = repo.get_contents("")
-        file_list = []
-
-        while files:
-            file_content = files.pop(0)
-            if file_content.type == "dir":
-                files.extend(repo.get_contents(file_content.path))
+    def _analyze_repo_structure(self, repo) -> str:
+        structure = []
+        contents = repo.get_contents("")
+        for i, content in enumerate(contents):
+            if i >= 20:  # Limit to 20 items in the structure
+                structure.append("...(more files/directories)...")
+                break
+            if content.type == "dir":
+                structure.append(f"Directory: {content.path}")
             else:
-                file_list.append(file_content.name)
+                structure.append(f"File: {content.path}")
+        
+        has_tests = any("test" in item.lower() for item in structure)
+        return f"Repository structure:\n" + "\n".join(structure) + f"\n\nTests present: {'Yes' if has_tests else 'No'}"
 
+    def _get_important_files(self, repo) -> List[str]:
+        important_files = []
+        contents = repo.get_contents("")
+        while contents:
+            file_content = contents.pop(0)
+            if file_content.type == "dir":
+                contents.extend(repo.get_contents(file_content.path))
+            elif file_content.name in ['README.md', 'setup.py', 'requirements.txt'] or file_content.name.endswith(('.py', '.js', '.ts')):
+                important_files.append(file_content.path)
+        return important_files[:5]  # Limit to 5 most important files
+
+    def _fetch_important_content(self, repo, important_files: List[str]) -> str:
+        content = ""
+        for file_path in important_files:
+            file_content = repo.get_contents(file_path)
+            file_text = file_content.decoded_content.decode('utf-8')
+            content += f"File: {file_path}\n\n{file_text}\n\n"
+        return content
+
+    def _evaluate_code_with_openai(self, structure_analysis: str, code_content: str) -> Dict[str, Any]:
         prompt = f"""
-        Given the following list of files from a GitHub repository:
+        Analyze the following GitHub repository structure and important file contents:
 
-        {', '.join(file_list[:100])}  # Limiting to first 100 files to avoid token limits
+        Repository Structure:
+        {structure_analysis}
 
-        Please analyze the tech stack based on these files and provide the following:
-        1. A list of identified technologies and frameworks
-        2. A score from 0-100 for how modern the tech stack is, considering current industry trends
-        3. A score from 0-100 for the potential scalability of the tech stack
-        4. A brief summary (max 100 words) explaining the scores and highlighting key aspects of the tech stack
+        Important File Contents:
+        {code_content}
 
-        Provide your response in JSON format with the following keys:
-        "technologies", "modernness_score", "scalability_score", "summary"
+        Please provide the following evaluations:
+        1. Repository Structure: Grade the overall structure out of 1000 points. Consider organization, modularity, and best practices.
+        2. Code Quality: Evaluate the code quality based on the provided file contents. Consider readability, maintainability, and adherence to coding standards.
+
+        Format your response as a JSON object with the following structure:
+        {{
+            "structure_grade": 0,
+            "code_quality": {{
+                "rating": 0.0,
+                "explanation": ""
+            }}
+        }}
         """
-
-        logging.info(f"Sending prompt to OpenAI: {prompt}")
 
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that analyzes tech stacks."},
+                    {"role": "system", "content": "You are a code evaluation expert."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            response_content = response.choices[0].message['content'].strip()
-            logging.info(f"OpenAI API response: {response_content}")
-            
-            result = json.loads(response_content)
-            return {
-                "technologies": result["technologies"],
-                "modernness_score": float(result["modernness_score"]),
-                "scalability_score": float(result["scalability_score"]),
-                "summary": result["summary"]
-            }
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON parsing error: {str(e)}")
-            logging.error(f"Response content: {response_content}")
-            raise Exception(f"Error parsing OpenAI response: {str(e)}")
-        except KeyError as e:
-            logging.error(f"Missing key in JSON: {str(e)}")
-            logging.error(f"Parsed JSON: {result}")
-            raise Exception(f"Missing key in OpenAI response: {str(e)}")
+            return json.loads(response.choices[0].message['content'])
         except Exception as e:
-            logging.error(f"Unexpected error: {str(e)}")
-            raise Exception(f"Unexpected error in OpenAI response processing: {str(e)}")
+            logging.error(f"Error in OpenAI API request: {str(e)}")
+            return {
+                "structure_grade": 0,
+                "code_quality": {"rating": 0.0, "explanation": "Error occurred during evaluation"}
+            }
 
-    def _calculate_grades_and_summary(self, sonarcloud_report: Dict[str, Any], codacy_report: Dict[str, Any], tech_stack: Dict[str, Any]) -> Tuple[float, float, str]:
-        """
-        Calculate overall grades and generate a summary based on SonarCloud, Codacy, and tech stack reports.
-
-        Args:
-            sonarcloud_report (Dict[str, Any]): The SonarCloud analysis report.
-            codacy_report (Dict[str, Any]): The Codacy analysis report.
-            tech_stack (Dict[str, Any]): The tech stack evaluation report.
-
-        Returns:
-            Tuple[float, float, str]: A tuple containing:
-                - code_quality_grade (float): The overall code quality grade (0-100).
-                - tech_stack_grade (float): The tech stack grade (0-100).
-                - summary (str): A detailed summary of the evaluation.
-        """
-        sonar_grade = self._calculate_sonarcloud_grade(sonarcloud_report)
-        codacy_grade = self._calculate_codacy_grade(codacy_report)
-        code_quality_grade = round((sonar_grade + codacy_grade) / 2, 1)
+    def _evaluate_tech_stack(self, repo) -> Dict[str, Any]:
+        files = repo.get_contents("")
+        file_list = [file.path for file in files if file.type == "file"]
         
-        tech_stack_grade = round(tech_stack.get('modernness_score', 0), 1)
-        
-        summary = f"""
-        Code Quality Grade: {code_quality_grade}/100
-        Tech Stack Grade: {tech_stack_grade}/100
-        
-        SonarCloud Analysis:
-        {self._summarize_sonarcloud_report(sonarcloud_report)}
-        
-        Codacy Analysis:
-        {self._summarize_codacy_report(codacy_report)}
-        
-        Tech Stack Analysis:
-        {tech_stack.get('summary', 'No tech stack summary available')}
-        """
-        
-        return code_quality_grade, tech_stack_grade, summary
-
-    def _calculate_sonarcloud_grade(self, report: Dict[str, Any]) -> float:
-        """
-        Calculate a grade based on SonarCloud metrics.
-
-        Args:
-            report (Dict[str, Any]): The SonarCloud analysis report.
-
-        Returns:
-            float: The calculated grade (0-100).
-        """
-        measures = report['measures']['component']['measures']
-        reliability = next(m for m in measures if m['metric'] == 'reliability_rating')['value']
-        security = next(m for m in measures if m['metric'] == 'security_rating')['value']
-        maintainability = next(m for m in measures if m['metric'] == 'sqale_rating')['value']
-        
-        rating_to_score = {'A': 100, 'B': 80, 'C': 60, 'D': 40, 'E': 20}
-        return (rating_to_score[reliability] + rating_to_score[security] + rating_to_score[maintainability]) / 3
-
-    def _calculate_codacy_grade(self, report: Dict[str, Any]) -> float:
-        """
-        Calculate a grade based on Codacy metrics.
-
-        Args:
-            report (Dict[str, Any]): The Codacy analysis report.
-
-        Returns:
-            float: The calculated grade (0-100).
-        """
-        return report['summary']['grade'] * 20  # Assuming grade is 1-5, convert to 0-100
-
-    def _summarize_sonarcloud_report(self, report: Dict[str, Any]) -> str:
-        """
-        Generate a summary of the SonarCloud report.
-
-        Args:
-            report (Dict[str, Any]): The SonarCloud analysis report.
-
-        Returns:
-            str: A summary string of the SonarCloud report.
-        """
-        measures = report['measures']['component']['measures']
-        return f"Lines of code: {next(m for m in measures if m['metric'] == 'ncloc')['value']}, " \
-               f"Issues: {report['issues']['total']}, " \
-               f"Coverage: {next(m for m in measures if m['metric'] == 'coverage')['value']}%"
-
-    def _summarize_codacy_report(self, report: Dict[str, Any]) -> str:
-        """
-        Generate a summary of the Codacy report.
-
-        Args:
-            report (Dict[str, Any]): The Codacy analysis report.
-
-        Returns:
-            str: A summary string of the Codacy report.
-        """
-        return f"Grade: {report['summary']['grade']}, " \
-               f"Issues: {report['summary']['issuesCount']}, " \
-               f"Complexity: {report['metrics']['complexity']}"
-
-    def _aggregate_summary(self, code_quality_grade: float, tech_stack_grade: float, summary: str) -> str:
-        """
-        Generate a final summary using OpenAI's GPT-4 based on the evaluation results.
-
-        Args:
-            code_quality_grade (float): The overall code quality grade (0-100).
-            tech_stack_grade (float): The tech stack grade (0-100).
-            summary (str): A detailed summary of the evaluation.
-
-        Returns:
-            str: A concise, professional summary of the repository's code quality and tech stack.
-
-        Raises:
-            openai.error.OpenAIError: If there's an error in the OpenAI API request.
-        """
         prompt = f"""
-        Given the following information about a GitHub repository:
-        
-        Code Quality Grade: {code_quality_grade}/100
-        Tech Stack Grade: {tech_stack_grade}/100
-        
-        Detailed Summary:
-        {summary}
-        
-        Please provide a concise, professional summary of the repository's code quality and tech stack. 
-        Highlight key strengths and areas for improvement for both aspects. 
-        Keep the response under 200 words.
+        Based on the following list of files in a GitHub repository, identify the likely tech stack used:
+
+        {', '.join(file_list)}
+
+        Please provide:
+        1. A list of up to 5 main technologies/frameworks likely used in this project.
+        2. A grade from 0 to 1000 evaluating how modern and appropriate the tech stack seems for the project.
+
+        Format your response as a JSON object with the following structure:
+        {{
+            "stack": ["technology1", "technology2", ...],
+            "grade": 0
+        }}
         """
-        
+
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that provides concise summaries of code quality and tech stack evaluations."},
+                    {"role": "system", "content": "You are a tech stack evaluation expert."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            return response.choices[0].message['content'].strip()
-        except openai.error.OpenAIError as e:
-            raise openai.error.OpenAIError(f"Error in OpenAI API request: {str(e)}")
+            return json.loads(response.choices[0].message['content'])
+        except Exception as e:
+            logging.error(f"Error in OpenAI API request for tech stack evaluation: {str(e)}")
+            return {"stack": [], "grade": 0}
+
+    def _calculate_aggregate_grade(self, evaluation: Dict[str, Any]) -> float:
+        """
+        Calculate the aggregate grade from individual ratings.
+
+        Args:
+            evaluation (Dict[str, Any]): The evaluation results from OpenAI.
+
+        Returns:
+            float: The aggregate grade (0-100) with one decimal place.
+        """
+        ratings = [evaluation[key]['rating'] for key in ['security', 'code_quality', 'documentation', 'efficiency']]
+        return round(sum(ratings) / len(ratings), 1)
+
+    def _generate_summary(self, code_evaluation: Dict[str, Any], tech_stack: Dict[str, Any]) -> str:
+        """
+        Generate a summary based on the evaluation results.
+
+        Args:
+            code_evaluation (Dict[str, Any]): The code evaluation results from OpenAI.
+            tech_stack (Dict[str, Any]): The tech stack evaluation results.
+
+        Returns:
+            str: A detailed summary of the evaluation.
+        """
+        summary = f"""
+        Structure Grade: {code_evaluation['structure_grade']}/1000
+
+        Code Quality Grade: {code_evaluation['code_quality']['rating']}/100
+        {code_evaluation['code_quality']['explanation']}
+
+        Tech Stack Grade: {tech_stack['grade']}/1000
+        Technologies: {', '.join(tech_stack['stack'])}
+        """
+        return summary.strip()
 
 # Usage example:
 # evaluator = GithubCodeEvaluator()
 # result = evaluator.evaluate_repository("https://github.com/owner/repo")
 # print(f"Code Quality Grade: {result['code_quality_grade']}")
-# print(f"Tech Stack Grade: {result['tech_stack_grade']}")
 # print(f"Summary: {result['summary']}")

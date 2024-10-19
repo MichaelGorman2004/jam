@@ -21,10 +21,18 @@ def test_github_evaluator():
         result = evaluator.evaluate_repository(repo_url)
 
         # Print the results
-        print(f"Repository: {repo_url}")
-        print(f"Code Quality Grade: {result['code_quality_grade']}")
-        print(f"Tech Stack Grade: {result['tech_stack_grade']}")
-        print("\nSummary:")
+        print(f"\nRepository: {repo_url}")
+        print(f"Structure Grade: {result['structure_grade']}/1000")
+        print(f"Code Quality Grade: {result['code_quality_grade']}/100")
+        print(f"Tech Stack Grade: {result['tech_stack_grade']}/1000")
+        
+        print("\nCode Quality Explanation:")
+        print(result['code_quality_explanation'])
+        
+        print("\nTech Stack:")
+        print(", ".join(result['tech_stack']))
+        
+        print("\nDetailed Summary:")
         print(result['summary'])
 
     except Exception as e:
