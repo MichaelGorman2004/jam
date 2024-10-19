@@ -1,1 +1,18 @@
+# FastAPI and related packages
+fastapi
+uvicorn
 
+# GitHub API
+PyGithub
+
+# CodeClimate API (replace with the correct package if different)
+codeclimate-python
+
+# SonarQube API
+python-sonarqube-api
+
+# Other useful packages for web development
+requests
+python-dotenv
+
+# You may need to add or adjust versions as needed
