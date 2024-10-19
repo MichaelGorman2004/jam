@@ -1,1 +1,5 @@
-
+openai
+requests
+scikit-learn
+moviepy
+python-dotenv
