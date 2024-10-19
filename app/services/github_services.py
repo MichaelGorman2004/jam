@@ -6,6 +6,7 @@ import openai
 import os
 import json
 from typing import Dict, Tuple, List, Any
+import logging
 
 class GithubCodeEvaluator:
     def __init__(self):
@@ -156,12 +157,32 @@ class GithubCodeEvaluator:
         headers = {"api-token": self.codacy_token}
         
         summary_url = f"{self.codacy_url}/analysis/organizations/{owner}/projects/{repo_name}"
+        logging.info(f"Requesting Codacy summary from: {summary_url}")
         response = requests.get(summary_url, headers=headers)
-        summary = response.json()
+        
+        if response.status_code != 200:
+            logging.error(f"Codacy API error: {response.status_code} - {response.text}")
+            return {"summary": {}, "metrics": {}}
+
+        try:
+            summary = response.json()
+        except json.JSONDecodeError:
+            logging.error(f"Failed to parse Codacy summary response: {response.text}")
+            summary = {}
 
         metrics_url = f"{self.codacy_url}/metrics/organizations/{owner}/projects/{repo_name}"
+        logging.info(f"Requesting Codacy metrics from: {metrics_url}")
         response = requests.get(metrics_url, headers=headers)
-        metrics = response.json()
+        
+        if response.status_code != 200:
+            logging.error(f"Codacy API error: {response.status_code} - {response.text}")
+            return {"summary": summary, "metrics": {}}
+
+        try:
+            metrics = response.json()
+        except json.JSONDecodeError:
+            logging.error(f"Failed to parse Codacy metrics response: {response.text}")
+            metrics = {}
 
         return {
             "summary": summary,
@@ -170,20 +191,20 @@ class GithubCodeEvaluator:
 
     def _evaluate_tech_stack(self, repo: Any) -> Dict[str, Any]:
         """
-        Evaluate the modernness and scalability of the repository's tech stack using OpenAI.
+        Evaluate the tech stack using OpenAI's GPT-4.
 
         Args:
-            repo (github.Repository.Repository): A PyGithub repository object.
+            repo (Any): The GitHub repository object.
 
         Returns:
-            Dict[str, Any]: A dictionary containing tech stack evaluation results:
-                - technologies (List[str]): List of identified technologies.
+            Dict[str, Any]: A dictionary containing:
+                - technologies (List[str]): Identified technologies and frameworks.
                 - modernness_score (float): Score for how modern the stack is (0-100).
                 - scalability_score (float): Score for potential scalability (0-100).
                 - summary (str): A brief summary of the evaluation.
 
         Raises:
-            Exception: If there's an error parsing the OpenAI response.
+            Exception: If there's an error in parsing the OpenAI response.
         """
         files = repo.get_contents("")
         file_list = []
@@ -210,25 +231,37 @@ class GithubCodeEvaluator:
         "technologies", "modernness_score", "scalability_score", "summary"
         """
 
-        response = openai.Completion.create(
-            engine="text-davinci-002",
-            prompt=prompt,
-            max_tokens=500,
-            n=1,
-            stop=None,
-            temperature=0.5,
-        )
+        logging.info(f"Sending prompt to OpenAI: {prompt}")
 
         try:
-            result = json.loads(response.choices[0].text.strip())
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that analyzes tech stacks."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            response_content = response.choices[0].message['content'].strip()
+            logging.info(f"OpenAI API response: {response_content}")
+            
+            result = json.loads(response_content)
             return {
                 "technologies": result["technologies"],
                 "modernness_score": float(result["modernness_score"]),
                 "scalability_score": float(result["scalability_score"]),
                 "summary": result["summary"]
             }
-        except (json.JSONDecodeError, KeyError) as e:
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON parsing error: {str(e)}")
+            logging.error(f"Response content: {response_content}")
             raise Exception(f"Error parsing OpenAI response: {str(e)}")
+        except KeyError as e:
+            logging.error(f"Missing key in JSON: {str(e)}")
+            logging.error(f"Parsed JSON: {result}")
+            raise Exception(f"Missing key in OpenAI response: {str(e)}")
+        except Exception as e:
+            logging.error(f"Unexpected error: {str(e)}")
+            raise Exception(f"Unexpected error in OpenAI response processing: {str(e)}")
 
     def _calculate_grades_and_summary(self, sonarcloud_report: Dict[str, Any], codacy_report: Dict[str, Any], tech_stack: Dict[str, Any]) -> Tuple[float, float, str]:
         """
@@ -328,7 +361,7 @@ class GithubCodeEvaluator:
 
     def _aggregate_summary(self, code_quality_grade: float, tech_stack_grade: float, summary: str) -> str:
         """
-        Generate a final summary using OpenAI based on the evaluation results.
+        Generate a final summary using OpenAI's GPT-4 based on the evaluation results.
 
         Args:
             code_quality_grade (float): The overall code quality grade (0-100).
@@ -355,16 +388,17 @@ class GithubCodeEvaluator:
         Keep the response under 200 words.
         """
         
-        response = openai.Completion.create(
-            engine="text-davinci-002",
-            prompt=prompt,
-            max_tokens=200,
-            n=1,
-            stop=None,
-            temperature=0.7,
-        )
-        
-        return response.choices[0].text.strip()
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that provides concise summaries of code quality and tech stack evaluations."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.choices[0].message['content'].strip()
+        except openai.error.OpenAIError as e:
+            raise openai.error.OpenAIError(f"Error in OpenAI API request: {str(e)}")
 
 # Usage example:
 # evaluator = GithubCodeEvaluator()

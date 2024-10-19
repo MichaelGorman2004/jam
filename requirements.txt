@@ -4,9 +4,8 @@ uvicorn
 
 # GitHub API
 PyGithub
+openai
 
-# CodeClimate API (replace with the correct package if different)
-codeclimate-python
 
 # SonarQube API
 python-sonarqube-api
