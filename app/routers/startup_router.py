@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, File, UploadFile, Form
-from app.startup import Startup as StartupModel
-from app.startup import Startup
+from app.startup_class import Startup
 from app.models.startup_model import GradeWithDescription, StartupGradingResponse
 
 # Create a new router instance
@@ -19,8 +18,8 @@ async def submit_startup(
         video_content = await presentation_video.read()
         pdf_content = await presentation_pdf.read()
 
-        # Create a new StartupModel instance with the submitted data
-        startup_data = StartupModel(
+        # Create a new Startup instance with the submitted data
+        startup_data = Startup(
             name=name,
             github_url=github_url,
             presentation_video=video_content,
