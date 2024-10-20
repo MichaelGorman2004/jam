@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from dotenv import load_dotenv
 from app.services.github_services import GithubCodeEvaluator
 
@@ -18,22 +19,12 @@ def test_github_evaluator():
 
     try:
         # Evaluate the repository
-        result = evaluator.evaluate_repository(repo_url)
+        result_json = evaluator.evaluate_repository(repo_url)
+        result = json.loads(result_json)
 
         # Print the results
         print(f"\nRepository: {repo_url}")
-        print(f"Structure Grade: {result['structure_grade']}/1000")
-        print(f"Code Quality Grade: {result['code_quality_grade']}/100")
-        print(f"Tech Stack Grade: {result['tech_stack_grade']}/1000")
-        
-        print("\nCode Quality Explanation:")
-        print(result['code_quality_explanation'])
-        
-        print("\nTech Stack:")
-        print(", ".join(result['tech_stack']))
-        
-        print("\nDetailed Summary:")
-        print(result['summary'])
+        print(json.dumps(result, indent=2))
 
     except Exception as e:
         logging.exception("An error occurred:")

@@ -18,7 +18,7 @@ class GithubCodeEvaluator:
         # OpenAI API key for authentication (e.g., "sk-1234567890abcdef")
         openai.api_key = os.getenv('OPENAI_API_KEY')
 
-    def evaluate_repository(self, repo_url: str) -> Dict[str, Any]:
+    def evaluate_repository(self, repo_url: str) -> str:
         """
         Evaluate a GitHub repository for code quality and tech stack.
 
@@ -26,13 +26,19 @@ class GithubCodeEvaluator:
             repo_url (str): The URL of the GitHub repository to evaluate.
 
         Returns:
-            Dict[str, Any]: A dictionary containing the evaluation results:
-                - structure_grade (float): The overall structure grade (0-1000).
+            str: A JSON-formatted string containing the evaluation results:
+                - structure_grade (float): The overall structure grade (0-100).
                 - code_quality_grade (float): The code quality grade (0-100).
+                - security_grade (float): The security grade (0-100).
+                - documentation_grade (float): The documentation grade (0-100).
+                - efficiency_grade (float): The efficiency grade (0-100).
+                - tech_stack_grade (float): The tech stack grade (0-100).
                 - code_quality_explanation (str): Explanation of the code quality grade.
-                - tech_stack_grade (float): The tech stack grade (0-1000).
-                - tech_stack (Dict[str, Any]): Tech stack evaluation results.
-                - summary (str): A detailed summary of the evaluation.
+                - security_explanation (str): Explanation of the security grade.
+                - documentation_explanation (str): Explanation of the documentation grade.
+                - efficiency_explanation (str): Explanation of the efficiency grade.
+                - tech_stack (List[str]): List of technologies used in the project.
+                - summary (str): A text summary of the evaluation without numerical scores.
 
         Raises:
             ValueError: If the repository URL is invalid or the repository is not accessible.
@@ -49,14 +55,22 @@ class GithubCodeEvaluator:
         
         summary = self._generate_summary(code_evaluation, tech_stack)
         
-        return {
+        result = {
             "structure_grade": code_evaluation['structure_grade'],
             "code_quality_grade": code_evaluation['code_quality']['rating'],
-            "code_quality_explanation": code_evaluation['code_quality']['explanation'],
+            "security_grade": code_evaluation['security']['rating'],
+            "documentation_grade": code_evaluation['documentation']['rating'],
+            "efficiency_grade": code_evaluation['efficiency']['rating'],
             "tech_stack_grade": tech_stack['grade'],
+            "code_quality_explanation": code_evaluation['code_quality']['explanation'],
+            "security_explanation": code_evaluation['security']['explanation'],
+            "documentation_explanation": code_evaluation['documentation']['explanation'],
+            "efficiency_explanation": code_evaluation['efficiency']['explanation'],
             "tech_stack": tech_stack['stack'],
             "summary": summary
         }
+        
+        return json.dumps(result, indent=2)
 
     def _parse_github_url(self, url: str) -> Tuple[str, str]:
         """
@@ -135,16 +149,21 @@ class GithubCodeEvaluator:
         {code_content}
 
         Please provide the following evaluations:
-        1. Repository Structure: Grade the overall structure out of 1000 points. Consider organization, modularity, and best practices.
-        2. Code Quality: Evaluate the code quality based on the provided file contents. Consider readability, maintainability, and adherence to coding standards.
+        1. Repository Structure: Grade the overall structure out of 100 points. Be specific with the score (e.g., 87.6/100).
+        2. Code Quality: Evaluate the code quality based on the provided file contents. Grade out of 100 points, being specific (e.g., 92.7/100).
+        3. Security: Evaluate the code security. Grade out of 100 points, being specific (e.g., 88.3/100).
+        4. Documentation: Evaluate the code documentation. Grade out of 100 points, being specific (e.g., 95.2/100).
+        5. Efficiency: Evaluate the code efficiency. Grade out of 100 points, being specific (e.g., 91.8/100).
+
+        For each criterion, consider relevant factors and provide a brief explanation.
 
         Format your response as a JSON object with the following structure:
         {{
-            "structure_grade": 0,
-            "code_quality": {{
-                "rating": 0.0,
-                "explanation": ""
-            }}
+            "structure_grade": 0.0,
+            "code_quality": {{"rating": 0.0, "explanation": ""}},
+            "security": {{"rating": 0.0, "explanation": ""}},
+            "documentation": {{"rating": 0.0, "explanation": ""}},
+            "efficiency": {{"rating": 0.0, "explanation": ""}}
         }}
         """
 
@@ -152,7 +171,7 @@ class GithubCodeEvaluator:
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a code evaluation expert."},
+                    {"role": "system", "content": "You are a code evaluation expert. Provide specific, detailed scores with one decimal place out of 100."},
                     {"role": "user", "content": prompt}
                 ]
             )
@@ -160,8 +179,11 @@ class GithubCodeEvaluator:
         except Exception as e:
             logging.error(f"Error in OpenAI API request: {str(e)}")
             return {
-                "structure_grade": 0,
-                "code_quality": {"rating": 0.0, "explanation": "Error occurred during evaluation"}
+                "structure_grade": 0.0,
+                "code_quality": {"rating": 0.0, "explanation": "Error occurred during evaluation"},
+                "security": {"rating": 0.0, "explanation": "Error occurred during evaluation"},
+                "documentation": {"rating": 0.0, "explanation": "Error occurred during evaluation"},
+                "efficiency": {"rating": 0.0, "explanation": "Error occurred during evaluation"}
             }
 
     def _evaluate_tech_stack(self, repo) -> Dict[str, Any]:
@@ -175,12 +197,12 @@ class GithubCodeEvaluator:
 
         Please provide:
         1. A list of up to 5 main technologies/frameworks likely used in this project.
-        2. A grade from 0 to 1000 evaluating how modern and appropriate the tech stack seems for the project.
+        2. A grade from 0 to 100 evaluating how modern and appropriate the tech stack seems for the project. Be specific with the score (e.g., 87.6/100).
 
         Format your response as a JSON object with the following structure:
         {{
             "stack": ["technology1", "technology2", ...],
-            "grade": 0
+            "grade": 0.0
         }}
         """
 
@@ -188,14 +210,19 @@ class GithubCodeEvaluator:
             response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[
-                    {"role": "system", "content": "You are a tech stack evaluation expert."},
+                    {"role": "system", "content": "You are a tech stack evaluation expert. Provide specific, detailed scores with one decimal place out of 100."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            return json.loads(response.choices[0].message['content'])
+            # Extract only the JSON part from the response
+            response_text = response.choices[0].message['content']
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            json_response = response_text[json_start:json_end]
+            return json.loads(json_response)
         except Exception as e:
             logging.error(f"Error in OpenAI API request for tech stack evaluation: {str(e)}")
-            return {"stack": [], "grade": 0}
+            return {"stack": [], "grade": 0.0}
 
     def _calculate_aggregate_grade(self, evaluation: Dict[str, Any]) -> float:
         """
@@ -211,24 +238,21 @@ class GithubCodeEvaluator:
         return round(sum(ratings) / len(ratings), 1)
 
     def _generate_summary(self, code_evaluation: Dict[str, Any], tech_stack: Dict[str, Any]) -> str:
-        """
-        Generate a summary based on the evaluation results.
-
-        Args:
-            code_evaluation (Dict[str, Any]): The code evaluation results from OpenAI.
-            tech_stack (Dict[str, Any]): The tech stack evaluation results.
-
-        Returns:
-            str: A detailed summary of the evaluation.
-        """
         summary = f"""
-        Structure Grade: {code_evaluation['structure_grade']}/1000
-
-        Code Quality Grade: {code_evaluation['code_quality']['rating']}/100
+        Code Quality:
         {code_evaluation['code_quality']['explanation']}
 
-        Tech Stack Grade: {tech_stack['grade']}/1000
-        Technologies: {', '.join(tech_stack['stack'])}
+        Security:
+        {code_evaluation['security']['explanation']}
+
+        Documentation:
+        {code_evaluation['documentation']['explanation']}
+
+        Efficiency:
+        {code_evaluation['efficiency']['explanation']}
+
+        Tech Stack:
+        This project uses the following technologies: {', '.join(tech_stack['stack'])}
         """
         return summary.strip()
 
