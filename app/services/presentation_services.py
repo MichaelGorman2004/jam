@@ -4,10 +4,12 @@ import io
 import base64
 import os
 from openai import OpenAI
+from dotenv import load_dotenv
 
-print('Enter your key for open ai:')
 
-client = OpenAI(api_key=input())
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv('APIKEY'))
 
 
 
@@ -31,31 +33,6 @@ def convert_pdf_to_base64_images(pdf_file, dpi=85, resize_factor=0.4):
         base64_images.append(image_base64)
 
     return base64_images
-
-import os
-import base64
-
-def save_base64_images_to_directory(base64_images, directory='imagetest'):
-    # Create the directory if it doesn't exist
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-    # Loop through each base64-encoded image
-    for idx, image_base64 in enumerate(base64_images):
-        # Decode the base64 image
-        image_data = base64.b64decode(image_base64)
-
-        # Create the file path
-        image_path = os.path.join(directory, f'slide_{idx+1}.png')
-
-        # Save the image as a PNG file
-        with open(image_path, 'wb') as image_file:
-            image_file.write(image_data)
-
-    print(f"All images have been saved to '{directory}'.")
-
-# # Example usage with base64_images list
-# save_base64_images_to_directory(convert_pdf_to_base64_images(pdf_file="Athin's Send Offhacka.pdf"))
 
 PROMPT = """
 You are provided with a series of images representing the slides of a presentation. 
@@ -102,3 +79,26 @@ def grade_pdf_with_openai(pdf_file):
 #     print("Slideshow Feedback:", feedback)
 # except Exception as e:
 #     print(str(e))
+
+
+# def save_base64_images_to_directory(base64_images, directory='imagetest'):
+#     # Create the directory if it doesn't exist
+#     if not os.path.exists(directory):
+#         os.makedirs(directory)
+
+#     # Loop through each base64-encoded image
+#     for idx, image_base64 in enumerate(base64_images):
+#         # Decode the base64 image
+#         image_data = base64.b64decode(image_base64)
+
+#         # Create the file path
+#         image_path = os.path.join(directory, f'slide_{idx+1}.png')
+
+#         # Save the image as a PNG file
+#         with open(image_path, 'wb') as image_file:
+#             image_file.write(image_data)
+
+#     print(f"All images have been saved to '{directory}'.")
+
+# # Example usage with base64_images list
+# save_base64_images_to_directory(convert_pdf_to_base64_images(pdf_file="Athin's Send Offhacka.pdf"))
